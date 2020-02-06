@@ -63,7 +63,7 @@ executeH p pc rb
   | instr == Add  = executeH (calculate Add (a,b,c) p pc rb) (pc+4) rb
   | instr == Mul  = executeH (calculate Mul (a,b,c) p pc rb) (pc+4) rb
   | instr == Inp  = do (inp,p') <- input p; executeH (set p' (get p' (pc+1)) inp) (pc+2) rb
-  | instr == Out  = do p' <- output p (modeToVal a p rb (pc+1)); executeH p' (pc+2) rb
+  | instr == Out  = do p' <- output p (modeToVal a p rb (get p (pc+1))); executeH p' (pc+2) rb
   | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeH p pc' rb
   | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb in executeH p pc' rb
   | instr == Lt   = executeH (calculate Lt (a,b,c) p pc rb) (pc+4) rb
@@ -81,7 +81,7 @@ executeC p pc rb
   | instr == Inp  = if inps p == [] 
                      then return (pc, p) 
                      else do (inp,p') <- input p; executeC (set p' (get p' (pc+1)) inp) (pc+2) rb
-  | instr == Out  = do p' <- output p ((modeToVal a p rb (pc+1))); executeC p' (pc+2) rb 
+  | instr == Out  = do p' <- output p (modeToVal a p rb (get p (pc+1))); executeC p' (pc+2) rb 
   | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeC p pc' rb
   | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb in executeC p pc' rb 
   | instr == Lt   = executeC (calculate Lt (a,b,c) p pc rb) (pc+4) rb 
@@ -169,17 +169,19 @@ modeToVal Rel p rb i = get p (rb + i)
 
 -- |Gets the instruction at a given index in the program 
 get :: Program -> Int -> Int
-get p i = case Map.lookup i (diff p) of
+get p i = let (lo,hi) = bounds (tape p)
+          in case Map.lookup i (diff p) of
                  Just v  -> v
-                 Nothing -> tape p ! i 
+                 Nothing -> if i<=hi then tape p ! i else 0 
 
 -- |Sets a given index in a program to a given value
 set :: Program -> Int -> Int -> Program 
 set p i v 
-  | tape p ! i == v = Program {tape = tape p, diff = Map.delete i (diff p)
-                              ,inps = inps p, outp = outp p}
-  | otherwise       = Program {tape = tape p, diff = Map.insert i v (diff p)
-                              ,inps = inps p, outp = outp p}
+  | i<=hi && tape p ! i == v = Program {tape = tape p, diff = Map.delete i (diff p)
+                                       ,inps = inps p, outp = outp p}
+  | otherwise                = Program {tape = tape p, diff = Map.insert i v (diff p)
+                                       ,inps = inps p, outp = outp p}
+  where (lo,hi) = bounds (tape p) 
 
 -- |Interpretation of binary Operations 
 compute :: Operation -> Int -> Int -> Int
@@ -323,7 +325,7 @@ executeI p pc rb
   | instr == Add  = do prompt p pc rb; executeI (calculate Add (a,b,c) p pc rb) (pc+4) rb
   | instr == Mul  = do prompt p pc rb; executeI (calculate Mul (a,b,c) p pc rb) (pc+4) rb
   | instr == Inp  = do prompt p pc rb; (inp,p') <- input p; executeI (set p' (get p' (pc+1)) inp) (pc+2) rb
-  | instr == Out  = do prompt p pc rb; p' <- output p ((modeToVal a p rb (pc+1))); executeI p' (pc+2) rb
+  | instr == Out  = do prompt p pc rb; p' <- output p (modeToVal a p rb (get p (pc+1))); executeI p' (pc+2) rb
   | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb in do prompt p pc rb; executeI p pc' rb
   | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb in do prompt p pc rb; executeI p pc' rb
   | instr == Lt   = do prompt p pc rb; executeI (calculate Lt (a,b,c) p pc rb) (pc+4) rb
