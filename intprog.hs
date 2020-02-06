@@ -5,7 +5,7 @@ import Data.List
 import Control.Applicative
 import Library
 
--- todo: test RBO and Rel
+-- **************** Depreciated, moved to intcomp.hs ******************* 
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 -- types
