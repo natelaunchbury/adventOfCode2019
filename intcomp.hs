@@ -200,7 +200,7 @@ jumpOn p predicate (a,b,_) pc rb
 
 -- |Calculates position from relative base offset 
 offset :: Program -> Parameters -> Int -> Int -> Int  
-offset p (a,_,_) pc rb = modeToVal a p rb (get p (pc+1))
+offset p (a,_,_) pc rb = let off = modeToVal a p rb (get p (pc+1)) in off+rb
 
 -- |In programs without output, the result is often stored at position 0
 result :: Program -> Int
@@ -288,6 +288,9 @@ day7p2 = do
           rs <- go p perms
           return (r:rs) 
 
+day9p1 = do
+  p <- parseProg "input9.txt"
+  execute p 
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 -- parsing
