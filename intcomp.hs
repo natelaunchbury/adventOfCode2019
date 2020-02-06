@@ -62,13 +62,14 @@ executeH p pc rb
   | instr == Halt = return p
   | instr == Add  = executeH (calculate Add (a,b,c) p pc rb) (pc+4) rb
   | instr == Mul  = executeH (calculate Mul (a,b,c) p pc rb) (pc+4) rb
-  | instr == Inp  = do (inp,p') <- input p; executeH (set p' (get p' (pc+1)) inp) (pc+2) rb
+  | instr == Inp  = do (inp,p') <- input p 
+                       executeH (set p' (modeToPos a p' rb (get p' (pc+1))) inp) (pc+2) rb
   | instr == Out  = do p' <- output p (modeToVal a p rb (get p (pc+1))); executeH p' (pc+2) rb
   | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeH p pc' rb
   | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb in executeH p pc' rb
   | instr == Lt   = executeH (calculate Lt (a,b,c) p pc rb) (pc+4) rb
   | instr == Eq   = executeH (calculate Eq (a,b,c) p pc rb) (pc+4) rb
-  | instr == RBO  = let rb' = offset p (a,b,c) pc rb in executeH p (pc+2) rb' 
+  | instr == RBO  = let rb' = newbase p (a,b,c) pc rb in executeH p (pc+2) rb' 
   | otherwise = error $ "tape at " ++ show pc ++ " encountered " ++ show (tape p ! pc)
   where (instr, (a,b,c)) = unpackage (get p pc)
 
@@ -80,13 +81,14 @@ executeC p pc rb
   | instr == Mul  = executeC (calculate Mul (a,b,c) p pc rb) (pc+4) rb 
   | instr == Inp  = if inps p == [] 
                      then return (pc, p) 
-                     else do (inp,p') <- input p; executeC (set p' (get p' (pc+1)) inp) (pc+2) rb
+                     else do (inp,p') <- input p; 
+                             executeC (set p' (modeToPos a p' rb (get p' (pc+1))) inp) (pc+2) rb
   | instr == Out  = do p' <- output p (modeToVal a p rb (get p (pc+1))); executeC p' (pc+2) rb 
   | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeC p pc' rb
   | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb in executeC p pc' rb 
   | instr == Lt   = executeC (calculate Lt (a,b,c) p pc rb) (pc+4) rb 
   | instr == Eq   = executeC (calculate Eq (a,b,c) p pc rb) (pc+4) rb 
-  | instr == RBO  = let rb' = offset p (a,b,c) pc rb in executeC p (pc+2) rb'
+  | instr == RBO  = let rb' = newbase p (a,b,c) pc rb in executeC p (pc+2) rb'
   | otherwise = error $ "tape at " ++ show pc ++ " encountered " ++ show (tape p ! pc)
   where (instr, (a,b,c)) = unpackage (get p pc)
 
@@ -157,7 +159,7 @@ paraMode 2 = Rel
 calculate :: Operation -> Parameters -> Program -> Int -> Int -> Program 
 calculate op (a,b,c) p pc rb = let val1  = modeToVal a p rb (get p (pc+1)) 
                                    val2  = modeToVal b p rb (get p (pc+2)) 
-                                   store = get p (pc+3)
+                                   store = modeToPos c p rb (get p (pc+3))
                                in set p store (compute op val1 val2)
 
 -- |Given a parameter mode, returns the immediate value 
@@ -166,6 +168,11 @@ modeToVal Pos p rb i = get p i
 modeToVal Imm p rb i = i 
 modeToVal Rel p rb i = get p (rb + i)
 
+-- |Given a parameter mode, returns the position 
+modeToPos :: PMode -> Program -> Int -> Int -> Int
+modeToPos Pos p rb i = i 
+modeToPos Imm p rb i = error "modeToPos used on Imm parameter mode"
+modeToPos Rel p rb i = rb + i 
 
 -- |Gets the instruction at a given index in the program 
 get :: Program -> Int -> Int
@@ -198,9 +205,9 @@ jumpOn p predicate (a,b,_) pc rb
   where val1 = modeToVal a p rb (get p (pc+1))  
         val2 = modeToVal b p rb (get p (pc+2)) 
 
--- |Calculates position from relative base offset 
-offset :: Program -> Parameters -> Int -> Int -> Int  
-offset p (a,_,_) pc rb = let off = modeToVal a p rb (get p (pc+1)) in off+rb
+-- |Calculates position from relative base newbase 
+newbase :: Program -> Parameters -> Int -> Int -> Int  
+newbase p (a,_,_) pc rb = let off = modeToVal a p rb (get p (pc+1)) in off+rb
 
 -- |In programs without output, the result is often stored at position 0
 result :: Program -> Int
@@ -290,6 +297,12 @@ day7p2 = do
 
 day9p1 = do
   p <- parseProg "input9.txt"
+  putStrLn "Enter 1 at the prompt."
+  execute p 
+
+day9p2 = do
+  p <- parseProg "input9.txt"
+  putStrLn "Enter 2 at the prompt."
   execute p 
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
@@ -327,13 +340,14 @@ executeI p pc rb
   | instr == Halt = return p
   | instr == Add  = do prompt p pc rb; executeI (calculate Add (a,b,c) p pc rb) (pc+4) rb
   | instr == Mul  = do prompt p pc rb; executeI (calculate Mul (a,b,c) p pc rb) (pc+4) rb
-  | instr == Inp  = do prompt p pc rb; (inp,p') <- input p; executeI (set p' (get p' (pc+1)) inp) (pc+2) rb
+  | instr == Inp  = do prompt p pc rb; (inp,p') <- input p; 
+                       executeI (set p' (modeToPos a p' rb (get p' (pc+1))) inp) (pc+2) rb
   | instr == Out  = do prompt p pc rb; p' <- output p (modeToVal a p rb (get p (pc+1))); executeI p' (pc+2) rb
   | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb in do prompt p pc rb; executeI p pc' rb
   | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb in do prompt p pc rb; executeI p pc' rb
   | instr == Lt   = do prompt p pc rb; executeI (calculate Lt (a,b,c) p pc rb) (pc+4) rb
   | instr == Eq   = do prompt p pc rb; executeI (calculate Eq (a,b,c) p pc rb) (pc+4) rb
-  | instr == RBO  = let rb' = offset p (a,b,c) pc rb in do prompt p pc rb; executeI p (pc+2) rb' 
+  | instr == RBO  = let rb' = newbase p (a,b,c) pc rb in do prompt p pc rb; executeI p (pc+2) rb' 
   | otherwise = error $ "tape at " ++ show pc ++ " encountered " ++ show (tape p ! pc)
   where (instr, (a,b,c)) = unpackage (get p pc)
 
