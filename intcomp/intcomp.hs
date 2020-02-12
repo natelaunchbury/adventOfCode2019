@@ -1,3 +1,5 @@
+module IntComp where 
+
 import Data.Array
 import Data.IntMap(IntMap)
 import qualified Data.IntMap as Map
@@ -6,6 +8,11 @@ import Control.Applicative
 import Library
 
 main = undefined
+
+-- ToDo: internalInput function
+--       executeC via executeSkeleton framework 
+--       executeI via executeSkeleton framework 
+--       rewrite runAmpsFeedback to not need -1 PC on Halt (just check if "get p pc == Halt")
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 -- types
@@ -53,6 +60,36 @@ executeWithArguments p a b = do
    let p'' = set p' 2 b
    executeH p'' 0 0
 
+-- |Framework for program execution, used to implement execution patterns 
+executeSkeleton :: Program                          -- ^The program being executed 
+                -> Int                              -- ^The program counter (starts at 0) 
+                -> Int                              -- ^The relative base (starts at 0) 
+                -> (Program -> IO (Int,Program))    -- ^Function used to obtain input 
+                -> (Program -> Int -> Int -> IO ()) -- ^Debugging function 
+                -> IO (Program,Int,Int)             -- ^Final program state 
+executeSkeleton p pc rb finput fdebug = do
+  fdebug p pc rb 
+  case instr of
+    Halt -> do return (p,pc,rb) 
+    Add  -> do executeSkeleton (calculate Add (a,b,c) p pc rb) (pc+4) rb finput fdebug
+    Mul  -> do executeSkeleton (calculate Mul (a,b,c) p pc rb) (pc+4) rb finput fdebug
+    Inp  -> do (inp,p') <- finput p;  
+               let p'' = set p' (modeToPos a p' rb (get p (pc+1))) inp
+               executeSkeleton p'' (pc+2) rb finput fdebug
+    Out  -> do p' <- output p (modeToVal a p rb (get p (pc+1)))
+               executeSkeleton p' (pc+2) rb finput fdebug
+    Jt   -> let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeSkeleton p pc' rb finput fdebug 
+    Jf   -> let pc' = jumpOn p (==0) (a,b,c) pc rb in executeSkeleton p pc' rb finput fdebug 
+    Lt   -> executeSkeleton (calculate Lt (a,b,c) p pc rb) (pc+4) rb finput fdebug 
+    Eq   -> executeSkeleton (calculate Eq (a,b,c) p pc rb) (pc+4) rb finput fdebug 
+    RBO  -> let rb' = newbase p (a,b,c) pc rb in executeSkeleton p (pc+2) rb' finput fdebug 
+  where (instr, (a,b,c)) = unpackage (get p pc) 
+
+executeH' p pc rb = do (p,pc,rb) <- executeSkeleton p pc rb input noDebug; return p 
+
+-- |Trivial debug function 
+noDebug _ _ _ = return () 
+
 -- | Driving force of program execution; executes a single instruction then loops 
 executeH :: Program             -- ^The program being executed 
          -> Int                 -- ^The program counter 
@@ -79,7 +116,7 @@ executeC p pc rb
   | instr == Halt = return ((-1),p)   -- distinguish Halt from awaiting input 
   | instr == Add  = executeC (calculate Add (a,b,c) p pc rb) (pc+4) rb 
   | instr == Mul  = executeC (calculate Mul (a,b,c) p pc rb) (pc+4) rb 
-  | instr == Inp  = if inps p == [] 
+  | instr == Inp  = if null (inps p)
                      then return (pc, p) 
                      else do (inp,p') <- input p; 
                              executeC (set p' (modeToPos a p' rb (get p' (pc+1))) inp) (pc+2) rb
