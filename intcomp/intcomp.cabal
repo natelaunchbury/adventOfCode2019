@@ -1,0 +1,13 @@
+cabal-version:       2.2
+name:                nate
+version:             0.1.0.0
+
+library
+  exposed-modules:   IntComp
+  other-modules:     Library
+  default-language:  Haskell2010
+  build-depends:
+    base         ^>= 4.12,
+    JuicyPixels  ^>= 3.3.4,
+    array        ^>= 0.5.4,
+    containers   ^>= 0.6.2,
