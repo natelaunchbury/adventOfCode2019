@@ -44,13 +44,13 @@ type Parameters = (PMode, PMode, PMode)
 -- | General case for program execution, relying on the Output operation 
 execute :: Program -> IO ()
 execute p = do 
-  _ <- executeH p 0 0 
+  _ <- executeH' p 0 0 
   putStrLn "Done"
 
 -- | Program execution which shows the result 
 executeO :: Program -> IO ()
 executeO p = do 
-  r <- executeH p 0 0 
+  r <- executeH' p 0 0 
   putStrLn $ show (result r) 
 
 -- | A special case of execution where the first two arguments are changed 
@@ -58,37 +58,85 @@ executeWithArguments :: Program -> Int -> Int -> IO (Program)
 executeWithArguments p a b = do
    let p'  = set p  1 a
    let p'' = set p' 2 b
-   executeH p'' 0 0
+   executeH' p'' 0 0
 
 -- |Framework for program execution, used to implement execution patterns 
 executeSkeleton :: Program                          -- ^The program being executed 
                 -> Int                              -- ^The program counter (starts at 0) 
                 -> Int                              -- ^The relative base (starts at 0) 
                 -> (Program -> IO (Int,Program))    -- ^Function used to obtain input 
+                -> (Program -> Int -> IO (Program)) -- ^Function used to display output 
                 -> (Program -> Int -> Int -> IO ()) -- ^Debugging function 
-                -> IO (Program,Int,Int)             -- ^Final program state 
-executeSkeleton p pc rb finput fdebug = do
+                -> IO (Program,Int,Int)             -- ^Program, program counter, relative base 
+executeSkeleton p pc rb finput foutput fdebug = do
   fdebug p pc rb 
   case instr of
     Halt -> do return (p,pc,rb) 
-    Add  -> do executeSkeleton (calculate Add (a,b,c) p pc rb) (pc+4) rb finput fdebug
-    Mul  -> do executeSkeleton (calculate Mul (a,b,c) p pc rb) (pc+4) rb finput fdebug
+    Add  -> do executeSkeleton (calculate Add (a,b,c) p pc rb) (pc+4) rb finput foutput fdebug
+    Mul  -> do executeSkeleton (calculate Mul (a,b,c) p pc rb) (pc+4) rb finput foutput fdebug
     Inp  -> do (inp,p') <- finput p;  
                let p'' = set p' (modeToPos a p' rb (get p (pc+1))) inp
-               executeSkeleton p'' (pc+2) rb finput fdebug
-    Out  -> do p' <- output p (modeToVal a p rb (get p (pc+1)))
-               executeSkeleton p' (pc+2) rb finput fdebug
-    Jt   -> let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeSkeleton p pc' rb finput fdebug 
-    Jf   -> let pc' = jumpOn p (==0) (a,b,c) pc rb in executeSkeleton p pc' rb finput fdebug 
-    Lt   -> executeSkeleton (calculate Lt (a,b,c) p pc rb) (pc+4) rb finput fdebug 
-    Eq   -> executeSkeleton (calculate Eq (a,b,c) p pc rb) (pc+4) rb finput fdebug 
-    RBO  -> let rb' = newbase p (a,b,c) pc rb in executeSkeleton p (pc+2) rb' finput fdebug 
+               executeSkeleton p'' (pc+2) rb finput foutput fdebug
+    Out  -> do p' <- foutput p (modeToVal a p rb (get p (pc+1)))
+               executeSkeleton p' (pc+2) rb finput foutput fdebug
+    Jt   -> let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeSkeleton p pc' rb finput foutput fdebug 
+    Jf   -> let pc' = jumpOn p (==0) (a,b,c) pc rb in executeSkeleton p pc' rb finput foutput fdebug 
+    Lt   -> executeSkeleton (calculate Lt (a,b,c) p pc rb) (pc+4) rb finput foutput fdebug 
+    Eq   -> executeSkeleton (calculate Eq (a,b,c) p pc rb) (pc+4) rb finput foutput fdebug 
+    RBO  -> let rb' = newbase p (a,b,c) pc rb in executeSkeleton p (pc+2) rb' finput foutput fdebug 
   where (instr, (a,b,c)) = unpackage (get p pc) 
 
-executeH' p pc rb = do (p,pc,rb) <- executeSkeleton p pc rb input noDebug; return p 
+executeH' p pc rb = do 
+  (p,pc,rb) <- executeSkeleton p pc rb immediateSilentInput silentOutput noDebug 
+  return p 
+
+
+-- -- -- -- -- -- -- -- -- -- -- -- -- 
+-- input, output, debugging 
+-- -- -- -- -- -- -- -- -- -- -- -- -- 
+-- placeholders during refactoring 
+output = printOutput
+input = immediateInput
+
+-- |Input function which gets user input if no internal input is available, printing if it is 
+-- ToDo: use Haskeline instead
+immediateInput :: Program -> IO (Int,Program)
+immediateInput p = 
+  case inps p of 
+     [] -> do 
+         putStr "Please enter an int: "
+         n <- getLine
+         return (read n,p)
+     (i:is) -> do   
+         putStrLn $ "Input used: " ++ show i 
+         return (i, Program {tape = tape p, diff = diff p, inps = is, outp = outp p})
+
+-- |Input function which gets user input if no internal input is available 
+-- ToDo: use Haskeline instead
+immediateSilentInput :: Program -> IO (Int,Program)
+immediateSilentInput p = 
+  case inps p of 
+     [] -> do 
+         putStr "Please enter an int: "
+         n <- getLine
+         return (read n,p)
+     (i:is) -> do   
+         return (i, Program {tape = tape p, diff = diff p, inps = is, outp = outp p})
+
+-- |Output function which updates the Program but doesn't print anything 
+silentOutput p o = return (Program {tape = tape p, diff = diff p, inps =  inps p, outp = o:outp p})
+
+-- |Output function which updates the Program and prints
+printOutput :: Program -> Int -> IO (Program)
+printOutput p n = do
+  let p' = Program {tape = tape p, diff = diff p, inps = inps p, outp = n:outp p}
+  putStrLn $ "Output: " ++ (show n) 
+  return p'
+
 
 -- |Trivial debug function 
 noDebug _ _ _ = return () 
+
 
 -- | Driving force of program execution; executes a single instruction then loops 
 executeH :: Program             -- ^The program being executed 
@@ -137,7 +185,7 @@ runAmps :: Program           -- ^The program to be executed
         -> IO (Int)          -- ^The final amp's output 
 runAmps p []     _   = return (head (outp p))
 runAmps p (n:ns) out = do 
-    p' <- executeH (Program {tape=tape p, diff=diff p, inps=n:out:inps p, outp = []}) 0 0
+    p' <- executeH' (Program {tape=tape p, diff=diff p, inps=n:out:inps p, outp = []}) 0 0
     runAmps p' ns (head (outp p'))
 
 -- |Run the amplifiers "in parallel" so that non-final output is given to the next amp 
@@ -250,25 +298,6 @@ newbase p (a,_,_) pc rb = let off = modeToVal a p rb (get p (pc+1)) in rb + off
 result :: Program -> Int
 result p = get p 0 
 
--- |Simple function to handle printing to the terminal 
-output :: Program -> Int -> IO (Program)
-output p n = do
-  let p' = Program {tape = tape p, diff = diff p, inps = inps p, outp = n:outp p}
-  putStrLn $ "Output: " ++ (show n) 
-  return p'
-
--- |Simple function to handle input from the terminal 
--- ToDo: use Haskeline instead
-input :: Program -> IO (Int,Program)
-input p = 
-  case inps p of 
-     [] -> do 
-         putStr "Please enter an int: "
-         n <- getLine
-         return (read n,p)
-     (i:is) -> do   
-         putStrLn $ "Input used: " ++ show i 
-         return (i, Program {tape = tape p, diff = diff p, inps = is, outp = outp p})
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 -- solutions
@@ -276,13 +305,13 @@ input p =
 
 -- Execute the prog with inputs 12 and 2 
 day2p1 = do 
-  p <- parseProg "input2.txt"
+  p <- parseProg "../input2.txt"
   p' <- executeWithArguments p 12 2
   putStrLn $ show (result p') 
 
 -- Find inputs to make the result 19690720
 day2p2 = do 
-  p <- parseProg "input2.txt"
+  p <- parseProg "../input2.txt"
   let is = [(v,n) | v<-[0..99], n <-[0..99]]
   r <- go p is 
   case r of 
@@ -298,19 +327,19 @@ day2p2 = do
 
 -- Execute the TEST program with input 0 and get the diagnostic code output 
 day5p1 = do 
-  p <- parseProg "input5.txt"
+  p <- parseProg "../input5.txt"
   putStrLn "Enter 1 at the prompt."
   execute p 
   
 -- Execute the TEST program with input 5 and get the diagnostic code output 
 day5p2 = do 
-  p <- parseProg "input5.txt"
+  p <- parseProg "../input5.txt"
   putStrLn "Enter 5 at the prompt."
   execute p 
 
 -- Finds the phase ordering to maximize the output signal through the 5 amps 
 day7p1 = do 
-  p <- parseProg "input7.txt"
+  p <- parseProg "../input7.txt"
   results <- go p (permutations [0,1,2,3,4])
   putStrLn $ "Max value to thrusters: " ++ show (maximum results) 
   where go :: Program -> [[Int]] -> IO ([Int])
@@ -322,7 +351,7 @@ day7p1 = do
 
 -- Finds the phase ordering to maximize the output signal through the 5 amps 
 day7p2 = do 
-  p <- parseProg "input7.txt"
+  p <- parseProg "../input7.txt"
   results <- go p (permutations [5,6,7,8,9])
   putStrLn $ "Max value from feedback to thrusters: " ++ show (maximum results)
   where go :: Program -> [[Int]] -> IO ([Int])
@@ -334,13 +363,13 @@ day7p2 = do
 
 -- Runs the BOOST program to check for incorrectly implemented operations 
 day9p1 = do
-  p <- parseProg "input9.txt"
+  p <- parseProg "../input9.txt"
   putStrLn "Enter 1 at the prompt."
   execute p 
 
 -- Runs the BOOST program to find a coordinate value
 day9p2 = do
-  p <- parseProg "input9.txt"
+  p <- parseProg "../input9.txt"
   putStrLn "Enter 2 at the prompt."
   execute p 
 
