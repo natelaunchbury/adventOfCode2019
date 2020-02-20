@@ -4,14 +4,16 @@ import Data.Array
 import Data.IntMap(IntMap)
 import qualified Data.IntMap as Map
 import Data.List
-import Control.Applicative
-import Library
+import Text.Megaparsec (Parsec, sepBy, parse, errorBundlePretty)
+import Text.Megaparsec.Char (char)
+import Text.Megaparsec.Char.Lexer (decimal, signed)
+import Data.Void
+
 
 main = undefined
 
 -- ToDo: internalInput function
 --       executeC via executeSkeleton framework 
---       executeI via executeSkeleton framework 
 --       rewrite runAmpsFeedback to not need -1 PC on Halt (just check if "get p pc == Halt")
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
@@ -44,13 +46,13 @@ type Parameters = (PMode, PMode, PMode)
 -- | General case for program execution, relying on the Output operation 
 execute :: Program -> IO ()
 execute p = do 
-  _ <- executeH' p 0 0 
+  _ <- executeH p 
   putStrLn "Done"
 
--- | Program execution which shows the result 
+-- | Program execution which shows the result (used before Output command)
 executeO :: Program -> IO ()
 executeO p = do 
-  r <- executeH' p 0 0 
+  r <- executeS p 
   putStrLn $ show (result r) 
 
 -- | A special case of execution where the first two arguments are changed 
@@ -58,7 +60,7 @@ executeWithArguments :: Program -> Int -> Int -> IO (Program)
 executeWithArguments p a b = do
    let p'  = set p  1 a
    let p'' = set p' 2 b
-   executeH' p'' 0 0
+   executeH p''
 
 -- |Framework for program execution, used to implement execution patterns 
 executeSkeleton :: Program                          -- ^The program being executed 
@@ -86,10 +88,20 @@ executeSkeleton p pc rb finput foutput fdebug = do
     RBO  -> let rb' = newbase p (a,b,c) pc rb in executeSkeleton p (pc+2) rb' finput foutput fdebug 
   where (instr, (a,b,c)) = unpackage (get p pc) 
 
-executeH' p pc rb = do 
-  (p,pc,rb) <- executeSkeleton p pc rb immediateSilentInput silentOutput noDebug 
-  return p 
+-- |Execution pattern with silent input/output and no debugging 
+executeS p = do 
+  (p',pc',rb') <- executeSkeleton p 0 0 immediateSilentInput silentOutput noDebug 
+  return p' 
 
+-- |(Default) execution pattern with silent input but printing output and no debugging 
+executeH p = do 
+  (p',pc',rb') <- executeSkeleton p 0 0 immediateSilentInput printOutput noDebug 
+  return p' 
+
+-- |Execution pattern printing input and output and prompting/printing at each step 
+executeI p = do 
+  (p',pc',rb') <- executeSkeleton p 0 0 immediateInput printOutput promptDebug 
+  return p' 
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 -- input, output, debugging 
@@ -97,6 +109,7 @@ executeH' p pc rb = do
 -- placeholders during refactoring 
 output = printOutput
 input = immediateInput
+prompt = promptDebug
 
 -- |Input function which gets user input if no internal input is available, printing if it is 
 -- ToDo: use Haskeline instead
@@ -123,6 +136,11 @@ immediateSilentInput p =
      (i:is) -> do   
          return (i, Program {tape = tape p, diff = diff p, inps = is, outp = outp p})
 
+--internalInput :: Program -> IO (Int,Program)
+--internalInput p = case inps p of 
+--                    [] -> return (
+
+
 -- |Output function which updates the Program but doesn't print anything 
 silentOutput p o = return (Program {tape = tape p, diff = diff p, inps =  inps p, outp = o:outp p})
 
@@ -137,26 +155,16 @@ printOutput p n = do
 -- |Trivial debug function 
 noDebug _ _ _ = return () 
 
+-- |Degub function which displays program state then waits for the user 
+promptDebug :: Program -> Int -> Int -> IO ()
+promptDebug p pc rb = do 
+   putStrLn $ show p ++ " PC: " ++ show pc ++ ", RB: " ++ show rb 
+   _ <- getLine 
+   return ()
 
--- | Driving force of program execution; executes a single instruction then loops 
-executeH :: Program             -- ^The program being executed 
-         -> Int                 -- ^The program counter 
-         -> Int                 -- ^The relative base 
-         -> IO (Program)        -- ^The final program state
-executeH p pc rb
-  | instr == Halt = return p
-  | instr == Add  = executeH (calculate Add (a,b,c) p pc rb) (pc+4) rb
-  | instr == Mul  = executeH (calculate Mul (a,b,c) p pc rb) (pc+4) rb
-  | instr == Inp  = do (inp,p') <- input p 
-                       executeH (set p' (modeToPos a p' rb (get p' (pc+1))) inp) (pc+2) rb
-  | instr == Out  = do p' <- output p (modeToVal a p rb (get p (pc+1))); executeH p' (pc+2) rb
-  | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb in executeH p pc' rb
-  | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb in executeH p pc' rb
-  | instr == Lt   = executeH (calculate Lt (a,b,c) p pc rb) (pc+4) rb
-  | instr == Eq   = executeH (calculate Eq (a,b,c) p pc rb) (pc+4) rb
-  | instr == RBO  = let rb' = newbase p (a,b,c) pc rb in executeH p (pc+2) rb' 
-  | otherwise = error $ "tape at " ++ show pc ++ " encountered " ++ show (tape p ! pc)
-  where (instr, (a,b,c)) = unpackage (get p pc)
+-- -- -- -- -- -- -- -- -- -- -- -- -- 
+-- amplifiers  
+-- -- -- -- -- -- -- -- -- -- -- -- -- 
 
 -- | Execution that passes a continuation when input is needed from the console
 executeC :: Program -> Int -> Int -> IO (Int, Program)
@@ -185,7 +193,7 @@ runAmps :: Program           -- ^The program to be executed
         -> IO (Int)          -- ^The final amp's output 
 runAmps p []     _   = return (head (outp p))
 runAmps p (n:ns) out = do 
-    p' <- executeH' (Program {tape=tape p, diff=diff p, inps=n:out:inps p, outp = []}) 0 0
+    p' <- executeH (Program {tape=tape p, diff=diff p, inps=n:out:inps p, outp = []}) 
     runAmps p' ns (head (outp p'))
 
 -- |Run the amplifiers "in parallel" so that non-final output is given to the next amp 
@@ -217,6 +225,8 @@ unpackage n = let o = opcode (n `mod` 100)
               in (o, (a,b,c))
 
 -- | Returns the n-th digit of a number; right-to-left from 0 and supporting leading 0's
+-- >>> 4 `thDigit` 15302
+-- 1
 thDigit :: Int -> Int -> Int 
 thDigit i n = n `div` (10^i) `mod` 10 
 
@@ -378,51 +388,29 @@ day9p2 = do
 -- parsing
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 
--- ToDo: this doesn't work if the last num is negative 
-parseList = many (currentInt <* lit ',' <|> num)
+parseList xs = case parse integers "" xs of 
+                  Left err -> error (errorBundlePretty err)
+                  Right xs -> xs
+
+integers :: Parsec Void String [Int]
+integers = integer `sepBy` char ','
+
+integer = signed (return ()) decimal 
 
 parseProg file = do
   input <- readFile file
-  let list = run parseList input
+  let list = parseList input
   return (Program {tape = listArray (0,length list - 1) list 
                   ,diff = Map.empty, inps=[], outp = []})
+
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 -- testing
 -- -- -- -- -- -- -- -- -- -- -- -- -- 
 
----- | Interactive program execution which waits for the user at each instruction 
----- Essentially the same as 'executeH' but with 'prompt' calls 
-executeI :: Program -> Int -> Int -> IO (Program)
-executeI p pc rb
-  | instr == Halt = return p
-  | instr == Add  = do prompt p pc rb; executeI (calculate Add (a,b,c) p pc rb) (pc+4) rb
-  | instr == Mul  = do prompt p pc rb; executeI (calculate Mul (a,b,c) p pc rb) (pc+4) rb
-  | instr == Inp  = do prompt p pc rb; (inp,p') <- input p; 
-                       executeI (set p' (modeToPos a p' rb (get p' (pc+1))) inp) (pc+2) rb
-  | instr == Out  = do prompt p pc rb; 
-                       p' <- output p (modeToVal a p rb (get p (pc+1))); executeI p' (pc+2) rb
-  | instr == Jt   = let pc' = jumpOn p (/=0) (a,b,c) pc rb 
-                    in do prompt p pc rb; executeI p pc' rb
-  | instr == Jf   = let pc' = jumpOn p (==0) (a,b,c) pc rb 
-                    in do prompt p pc rb; executeI p pc' rb
-  | instr == Lt   = do prompt p pc rb; executeI (calculate Lt (a,b,c) p pc rb) (pc+4) rb
-  | instr == Eq   = do prompt p pc rb; executeI (calculate Eq (a,b,c) p pc rb) (pc+4) rb
-  | instr == RBO  = let rb' = newbase p (a,b,c) pc rb 
-                    in do prompt p pc rb; executeI p (pc+2) rb' 
-  | otherwise = error $ "tape at " ++ show pc ++ " encountered " ++ show (tape p ! pc)
-  where (instr, (a,b,c)) = unpackage (get p pc)
-
--- | Displays program state then waits for the user 
-prompt :: Program -> Int -> Int -> IO ()
-prompt p pc rb = do 
-   putStrLn $ show p ++ " PC: " ++ show pc ++ ", RB: " ++ show rb 
-   _ <- getLine 
-   return ()
-
 -- | Convenient function for turning a String into a Program 
 makeProg :: String -> Program
-makeProg s = let xs = run parseList s
+makeProg s = let xs = parseList s
              in Program {tape = listArray (0,(length xs - 1)) xs
                         ,diff = Map.empty, inps = [], outp = []}
 

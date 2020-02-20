@@ -55,6 +55,17 @@
   (major1) == 0 && (major2) == 6 && (minor) <= 2)
 #endif /* MIN_VERSION_containers */
 
+/* package megaparsec-8.0.0 */
+#ifndef VERSION_megaparsec
+#define VERSION_megaparsec "8.0.0"
+#endif /* VERSION_megaparsec */
+#ifndef MIN_VERSION_megaparsec
+#define MIN_VERSION_megaparsec(major1,major2,minor) (\
+  (major1) <  8 || \
+  (major1) == 8 && (major2) <  0 || \
+  (major1) == 8 && (major2) == 0 && (minor) <= 0)
+#endif /* MIN_VERSION_megaparsec */
+
 /* tool alex-3.2.1 */
 #ifndef TOOL_VERSION_alex
 #define TOOL_VERSION_alex "3.2.1"
